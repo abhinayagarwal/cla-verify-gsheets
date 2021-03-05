@@ -1,0 +1,75 @@
+name: 'Verify CLA using GSheets'
+description: 'Check Github username in Google Spreadsheet'
+inputs:
+  spreadsheetId:
+    description: 'Google Spreadsheet Id'
+    required: true
+    default: ''
+  sheetName:
+    description: 'Name of the Sheet in Google Spreadsheet'
+    required: true
+    default: ''
+  columnName:
+    description: 'Column name to search for data'
+    required: true
+    default: ''
+  searchFor:
+    description: 'Text to search'
+    required: true
+    default: ''
+  label:
+    description: 'Name of the label to be added if text is found in column'
+    required: false
+    default: ''
+  message:
+    description: 'Message to be posted if text is not found in column'
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - id: 'query_worksheet'
+      uses: jroehl/gsheet.action@release
+      with:
+        spreadsheetId: ${{ inputs.spreadsheetId }}
+        commands: |
+          [
+            { "command": "getData", "args": { "range": "${{ inputs.sheetName }}!${{ inputs.columnName }}:${{ inputs.columnName }}" } }
+          ]
+      env:
+        GSHEET_CLIENT_EMAIL: ${{ secrets.GSHEET_CLIENT_EMAIL }}
+        GSHEET_PRIVATE_KEY: ${{ secrets.GSHEET_PRIVATE_KEY }}
+    - name: Find username index
+      id: username-index
+      env:
+        RESULTS: ${{ steps.update_worksheet.outputs.results }}
+        TEXT: ${{ inputs.searchFor }}
+        # GITHUB_USER_NAME: ${{ github.event.pull_request.user.login }}
+        # GITHUB_USER_NAME: ${{ github.actor }}
+      shell: bash
+      run: |
+        index=`echo "$RESULTS" | jq -c '.results[].result.rawData | flatten | index(env.TEXT)'`
+        echo $TEXT
+        echo $index
+        [ "$index" = "null" ] && echo "Text not found in list"
+        echo "::set-output name=index::$index"
+    - name: Update Label
+      if: steps.username-index.outputs.index != 'null' && inputs.label != ''
+      uses: buildsville/add-remove-label@v1
+      with:
+        token: ${{secrets.GITHUB_TOKEN}}
+        label: ${{ inputs.label }}
+        type: add
+    - name: Add message
+      if: steps.username-index.outputs.index == 'null' && inputs.message != ''
+      uses: actions/github-script@v3
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          github.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '${{ inputs.message }}'
+          })
